@@ -181,45 +181,35 @@ def fetch_page_content(urls, max_workers=32, use_jina=False, jina_api_key=None, 
     return results
 
 
-def bing_web_search(query, subscription_key, endpoint, market='en-US', language='en', timeout=20):
-    """
-    Perform a search using the Bing Web Search API with a set timeout.
+def bing_web_search(query, subscription_key, endpoint=None, market='en-US', language='en', timeout=20):
+    response = requests.post(
+        "https://api.tavily.com/search",
+        headers={
+            "Authorization": f"Bearer {subscription_key}",
+            "Content-Type": "application/json"
+        },
+        json={
+            "query": query[:400],  # truncate to Tavily's limit
+            "max_results": 10
+        },
+        timeout=timeout
+    )
+    response.raise_for_status()
+    data = response.json()
 
-    Args:
-        query (str): Search query.
-        subscription_key (str): Subscription key for the Bing Search API.
-        endpoint (str): Endpoint for the Bing Search API.
-        market (str): Market, e.g., "en-US" or "zh-CN".
-        language (str): Language of the results, e.g., "en".
-        timeout (int or float or tuple): Request timeout in seconds.
-                                         Can be a float representing the total timeout,
-                                         or a tuple (connect timeout, read timeout).
-
-    Returns:
-        dict: JSON response of the search results. Returns None or raises an exception if the request times out.
-    """
-    headers = {
-        "Ocp-Apim-Subscription-Key": subscription_key
+    results = {
+        "webPages": {
+            "value": [
+                {
+                    "name": r.get("title", ""),
+                    "url": r.get("url", ""),
+                    "snippet": r.get("content", "")
+                }
+                for r in data.get("results", [])
+            ]
+        }
     }
-    params = {
-        "q": query,
-        "mkt": market,
-        "setLang": language,
-        "textDecorations": True,
-        "textFormat": "HTML"
-    }
-
-    try:
-        response = requests.get(endpoint, headers=headers, params=params, timeout=timeout)
-        response.raise_for_status()  # Raise exception if the request failed
-        search_results = response.json()
-        return search_results
-    except Timeout:
-        print(f"Bing Web Search request timed out ({timeout} seconds) for query: {query}")
-        return {}  # Or you can choose to raise an exception
-    except requests.exceptions.RequestException as e:
-        print(f"Error occurred during Bing Web Search request: {e}")
-        return {}
+    return results
 
 
 def extract_pdf_text(url):

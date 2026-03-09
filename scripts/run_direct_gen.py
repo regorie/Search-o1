@@ -154,6 +154,7 @@ def main():
         tensor_parallel_size=torch.cuda.device_count(),
         gpu_memory_utilization=0.95,
         quantization="awq",
+        max_model_len=10000,
     )
     
     # Load data

@@ -31,7 +31,87 @@ headers = {
 session = requests.Session()
 session.headers.update(headers)
 
+def tavily_web_search(
+        query: str,
+        api_key: str,
+        max_results: int=10,
+        search_depth: str="basic",
+        include_answer: bool=False,
+        include_raw_content: bool=False,
+        include_images: bool=False,
+        timeout: int=20,
+        ):
+    """
+    Perform a search using Tavily Search API.
 
+    Returns:
+        dict: Tavily JSON response (with 'results' list).
+    """
+    if not api_key:
+        raise ValueError("Tavily API key is required. Set --tavily_api_key or TAVILY_API_KEY.")
+
+    url = "https://api.tavily.com/search"
+    payload = {
+        "api_key": api_key,
+        "query": query,
+        "max_results": max_results,
+        "search_depth": search_depth,               # "basic" or "advanced"
+        "include_answer": include_answer,
+        "include_raw_content": include_raw_content, # often large
+        "include_images": include_images,
+    }
+
+    try:
+        resp = requests.post(url, json=payload, timeout=timeout)
+        resp.raise_for_status()
+        return resp.json()
+    except Timeout:
+        print(f"Tavily request timed out ({timeout}s) for query: {query}")
+        return {}
+    except requests.exceptions.RequestException as e:
+        print(f"Error occurred during Tavily request: {e}")
+        return {}
+
+def extract_relevant_info(search_results):
+    """
+    Extract relevant information from search results.
+
+    Supports BOTH:
+    - Bing schema (webPages.value[])
+    - Tavily schema (results[])
+    """
+    useful_info = []
+
+    # --- Tavily ---
+    if isinstance(search_results, dict) and "results" in search_results:
+        for idx, r in enumerate(search_results.get("results", [])):
+            info = {
+                "id": idx + 1,
+                "title": r.get("title", "") or "",
+                "url": r.get("url", "") or "",
+                "site_name": "",  # Tavily may not provide; leave blank
+                "date": (r.get("published_date", "") or "").split("T")[0],
+                "snippet": r.get("content", "") or "",  # Tavily's 'content' is a good snippet-like field
+                "context": "",
+            }
+            useful_info.append(info)
+        return useful_info
+
+    # --- Bing (backward compatible) ---
+    if "webPages" in search_results and "value" in search_results["webPages"]:
+        for idx, result in enumerate(search_results["webPages"]["value"]):
+            info = {
+                "id": idx + 1,
+                "title": result.get("name", ""),
+                "url": result.get("url", ""),
+                "site_name": result.get("siteName", ""),
+                "date": result.get("datePublished", "").split("T")[0],
+                "snippet": result.get("snippet", ""),
+                "context": "",
+            }
+            useful_info.append(info)
+        return useful_info
+    return None
 
 def remove_punctuation(text: str) -> str:
     """Remove punctuation from the text."""
@@ -181,35 +261,45 @@ def fetch_page_content(urls, max_workers=32, use_jina=False, jina_api_key=None, 
     return results
 
 
-def bing_web_search(query, subscription_key, endpoint=None, market='en-US', language='en', timeout=20):
-    response = requests.post(
-        "https://api.tavily.com/search",
-        headers={
-            "Authorization": f"Bearer {subscription_key}",
-            "Content-Type": "application/json"
-        },
-        json={
-            "query": query[:400],  # truncate to Tavily's limit
-            "max_results": 10
-        },
-        timeout=timeout
-    )
-    response.raise_for_status()
-    data = response.json()
+def bing_web_search(query, subscription_key, endpoint, market='en-US', language='en', timeout=20):
+    """
+    Perform a search using the Bing Web Search API with a set timeout.
 
-    results = {
-        "webPages": {
-            "value": [
-                {
-                    "name": r.get("title", ""),
-                    "url": r.get("url", ""),
-                    "snippet": r.get("content", "")
-                }
-                for r in data.get("results", [])
-            ]
-        }
+    Args:
+        query (str): Search query.
+        subscription_key (str): Subscription key for the Bing Search API.
+        endpoint (str): Endpoint for the Bing Search API.
+        market (str): Market, e.g., "en-US" or "zh-CN".
+        language (str): Language of the results, e.g., "en".
+        timeout (int or float or tuple): Request timeout in seconds.
+                                         Can be a float representing the total timeout,
+                                         or a tuple (connect timeout, read timeout).
+
+    Returns:
+        dict: JSON response of the search results. Returns None or raises an exception if the request times out.
+    """
+    headers = {
+        "Ocp-Apim-Subscription-Key": subscription_key
     }
-    return results
+    params = {
+        "q": query,
+        "mkt": market,
+        "setLang": language,
+        "textDecorations": True,
+        "textFormat": "HTML"
+    }
+
+    try:
+        response = requests.get(endpoint, headers=headers, params=params, timeout=timeout)
+        response.raise_for_status()  # Raise exception if the request failed
+        search_results = response.json()
+        return search_results
+    except Timeout:
+        print(f"Bing Web Search request timed out ({timeout} seconds) for query: {query}")
+        return {}  # Or you can choose to raise an exception
+    except requests.exceptions.RequestException as e:
+        print(f"Error occurred during Bing Web Search request: {e}")
+        return {}
 
 
 def extract_pdf_text(url):
@@ -242,34 +332,6 @@ def extract_pdf_text(url):
         return "Error: Request timed out after 20 seconds"
     except Exception as e:
         return f"Error: {str(e)}"
-
-def extract_relevant_info(search_results):
-    """
-    Extract relevant information from Bing search results.
-
-    Args:
-        search_results (dict): JSON response from the Bing Web Search API.
-
-    Returns:
-        list: A list of dictionaries containing the extracted information.
-    """
-    useful_info = []
-    
-    if 'webPages' in search_results and 'value' in search_results['webPages']:
-        for id, result in enumerate(search_results['webPages']['value']):
-            info = {
-                'id': id + 1,  # Increment id for easier subsequent operations
-                'title': result.get('name', ''),
-                'url': result.get('url', ''),
-                'site_name': result.get('siteName', ''),
-                'date': result.get('datePublished', '').split('T')[0],
-                'snippet': result.get('snippet', ''),  # Remove HTML tags
-                # Add context content to the information
-                'context': ''  # Reserved field to be filled later
-            }
-            useful_info.append(info)
-    
-    return useful_info
 
 
 # ------------------------------------------------------------

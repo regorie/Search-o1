@@ -12,7 +12,7 @@ import argparse
 
 from transformers import AutoTokenizer
 from vllm import LLM, SamplingParams
-from bing_search import bing_web_search, extract_relevant_info, fetch_page_content
+from bing_search import tavily_web_search, extract_relevant_info, fetch_page_content
 from evaluate import run_evaluation
 from prompts import (
     get_singleqa_rag_agent_instruction, 
@@ -151,18 +151,30 @@ def parse_args():
     )
 
     # Bing API Configuration
-    parser.add_argument(
-        '--bing_subscription_key',
-        type=str,
-        required=True,
-        help="Bing Search API subscription key."
-    )
+    #parser.add_argument(
+    #    '--bing_subscription_key',
+    #    type=str,
+    #    required=True,
+    #    help="Bing Search API subscription key."
+    #)
+
+    #parser.add_argument(
+    #    '--bing_endpoint',
+    #    type=str,
+    #    default="https://api.bing.microsoft.com/v7.0/search",
+    #    help="Bing Search API endpoint."
+    #)
 
     parser.add_argument(
-        '--bing_endpoint',
+        '--tavily_api_key',
         type=str,
-        default="https://api.bing.microsoft.com/v7.0/search",
-        help="Bing Search API endpoint."
+        default=None,
+    )
+    parser.add_argument(
+        '--search_depth',
+        type=str,
+        default="basic",
+        choices=["basic", "advanced"]
     )
 
     return parser.parse_args()
@@ -184,8 +196,9 @@ def main():
     top_k_sampling = args.top_k_sampling
     repetition_penalty = args.repetition_penalty
     max_tokens = args.max_tokens
-    bing_subscription_key = args.bing_subscription_key
-    bing_endpoint = args.bing_endpoint
+    #bing_subscription_key = args.bing_subscription_key
+    #bing_endpoint = args.bing_endpoint
+    tavily_api_key = args.tavily_api_key
     use_jina = args.use_jina
     jina_api_key = args.jina_api_key
 
@@ -262,8 +275,6 @@ def main():
         model=model_path,
         tensor_parallel_size=torch.cuda.device_count(),
         gpu_memory_utilization=0.95,
-        quantization="awq",
-        #max_model_len=10000,
     )
 
     # ---------------------- Data Loading ----------------------
@@ -392,7 +403,7 @@ def main():
                     else:
                         try:
                             # Execute search and cache results
-                            results = bing_web_search(query, bing_subscription_key, bing_endpoint, market='en-US', language='en')
+                            results = tavily_web_search(query, api_key=tavily_api_key, max_results=top_k, search_depth=args.search_depth)
                             search_cache[query] = results
                             print(f"Executed and cached search for query: {query}")
                         except Exception as e:
